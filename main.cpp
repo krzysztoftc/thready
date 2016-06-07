@@ -5,6 +5,10 @@
 #include <ctime>
 #include <unistd.h>
 #include <cstring>
+#include <vector>
+
+#define last_position 150
+#define move_time 30000
 
 using namespace std;
 
@@ -20,7 +24,10 @@ int fuel_state = 50;
 bool cistern = false;
 list<Client*> clients;
 list<Client*> cash_list;
+vector<bool> positions[3];
 int cistern_pos = 2000;
+
+int on_station = 0;
 
 char cistern_fuel[] = "##########";
 
@@ -34,6 +41,8 @@ pthread_mutex_t mutex_queses = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t mutex_cash = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t mutex_cash_queue = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t mutex_refresh = PTHREAD_MUTEX_INITIALIZER;
+
+pthread_mutex_t mutex_move[3] = {PTHREAD_MUTEX_INITIALIZER};
 
 /*************
  * CONDITIONAL
@@ -65,6 +74,7 @@ public:
     pthread_t th_tank;
     bool cash = false;
     int fuel;
+    int pos;
 
     Client(){
         Client::counter++;
@@ -83,7 +93,7 @@ public:
                 pump_queue[pump2]++;
             }
 
-            else {
+            else{
                 position = pump3;
                 pump_queue[pump3]++;
             }
@@ -102,6 +112,33 @@ public:
     void tank() {
         int time_cash = 3000000;
         int time_tank = 50000;
+
+        pos = last_position;
+
+
+        /*while (true){
+            pthread_mutex_lock(&mutex_move[position]);
+                if (positions[position][pos] == false) {
+                    positions[position][pos] = true;
+                    pthread_mutex_unlock(&mutex_move[position]);
+                    break;
+                }
+            pthread_mutex_unlock(&mutex_move[position]);
+            usleep(50000);
+        }
+         */
+
+        while( pos > 15 ) {
+            pthread_mutex_lock(&mutex_move[position]);
+                if (positions[position][pos-7] == false) {
+                    positions[position][pos] = false;
+                    pos--;
+                    positions[position][pos] = true;
+                }
+            pthread_mutex_unlock(&mutex_move[position]);
+            usleep(move_time);
+        }
+
         pthread_mutex_lock(&mutex_pump[position]);
 
         for (int i = 0; i < fuel; i++) {
@@ -124,16 +161,35 @@ public:
 
         pthread_mutex_lock(&mutex_cash);
         usleep(time_cash);
-        pump_queue[position]--;
+
 
 
         pthread_mutex_lock(&mutex_cash_queue);
         cash_list.pop_front();
         pthread_mutex_unlock(&mutex_cash_queue);
 
-        position = none;
+        pump_queue[position]--;
+
         pthread_mutex_unlock(&mutex_cash);
         pthread_mutex_unlock(&mutex_pump[pump_number]);
+
+        while( pos >= 7 ) {
+            pthread_mutex_lock(&mutex_move[position]);
+            if (positions[position][pos-7] == false) {
+                positions[position][pos] = false;
+                pos--;
+                positions[position][pos] = true;
+            }
+            pthread_mutex_unlock(&mutex_move[position]);
+            usleep(move_time);
+        }
+
+        pthread_mutex_lock(&mutex_move[position]);
+        positions[position][6] = false;
+        pthread_mutex_unlock(&mutex_move[position]);
+
+        position = none;
+        on_station--;
 
     }
 };
@@ -169,13 +225,12 @@ void refresh_view(){
 
     attron(COLOR_PAIR(7));
 
-    mvprintw(10, 15, "Dystrybutor 1: ");
-    mvprintw(12, 15, "Dystrybutor 2: ");
-    mvprintw(14, 15, "Dystrybutor 3: ");
+    mvprintw(5, 0, "%s"," ____ \n/____\\ \n|KASA| \n|    | \n|____| \n");
+    //mvprintw(2, 0, "Paliwa w zbiorniku: %d", fuel_state);
 
-    mvprintw(7, 0, "Kasa: ");
-    mvprintw(2, 0, "Paliwa w zbiorniku: %d", fuel_state);
 
+    mvprintw(3, 0, " _____________________");
+    mvprintw(4, 0, "|");
     if (fuel_state < 200) {
         attron(COLOR_PAIR(9));
     }
@@ -187,19 +242,30 @@ void refresh_view(){
     else {
         attron(COLOR_PAIR(11));
     }
-
-    if (fuel_state)
-    for (int i = 0 ; i <= fuel_state / 50; i++){
-        mvprintw(3, i, " ");
+    int i = 0;
+    if (fuel_state) {
+        for (; i <= fuel_state / 50; i++) {
+            mvprintw(4, i + 1, "_");
+        }
     }
-
     attroff(COLOR_PAIR(11));
-    mvprintw(5,0, "Miejsce dla cysterny: ");
+
+    for (; i <= 20; i++) {
+        mvprintw(4, i + 1, "_");
+    }
+    mvprintw(4, i + 1, "|");
+    //mvprintw(5,0, "Miejsce dla cysterny: ");
 
     if(cistern_pos < cols){
-        attron(COLOR_PAIR(9));
+
         pthread_mutex_lock(&mutex_refresh);
-            mvprintw(6,cistern_pos, cistern_fuel);
+
+            mvprintw(0,cistern_pos,"/_|");
+            mvprintw(1,cistern_pos,"|_|");
+            attron(COLOR_PAIR(9));
+            mvprintw(1,cistern_pos+3, cistern_fuel);
+            attroff(COLOR_PAIR(9));
+            mvprintw(2,cistern_pos,"O O       OOO");
         pthread_mutex_unlock(&mutex_refresh);
    }
 
@@ -209,21 +275,37 @@ void refresh_view(){
         clients.pop_front();
     }
 
+    mvprintw(10, 15, "   _____");
+    mvprintw(11, 15, "   |1| |");
+    mvprintw(12, 15, "   |_|");
+
+    mvprintw(17, 15, "   _____");
+    mvprintw(18, 15, "   |2| |");
+    mvprintw(19, 15, "   |_|");
+
+    mvprintw(24, 15, "   _____");
+    mvprintw(25, 15, "   |3| |");
+    mvprintw(26, 15, "   |_|");
+
     int pump_queue[3]={0};
     for(Client * client : clients){
         if (client -> position == cash){
         }
 
         else if (client -> position != none  ){
+            mvprintw(13+ (client->position)*7, (client -> pos), "   ___");
+            mvprintw(14+ (client->position)*7, (client -> pos), " _/|_|\\");
             attron(COLOR_PAIR(client->color));
-            mvprintw(11 + (client->position)*2, 15 + 4*pump_queue[client->position]++, "%02d", client -> id);
+            mvprintw(15+ (client->position)*7, (client -> pos), "|__%02d_|", client -> id);
+            attroff(COLOR_PAIR(client->color));
+            mvprintw(16+ (client->position)*7, (client -> pos), "O     O");
         }
     }
 
     int cash_queue = 0;
     for(Client * client : cash_list){
         attron(COLOR_PAIR(client->color));
-        mvprintw(8, 7 + 2*cash_queue++, "|");
+        mvprintw(10, 7 + 2*cash_queue++, "|");
     }
 
     attron(COLOR_PAIR(7));
@@ -239,21 +321,21 @@ void refresh_view(){
 void *thread_cistern(void *args){
     char c[] = "##########";
     char s[] = "          ";
-    cistern_pos = cols - 10;
+    cistern_pos = cols - 12;
     memcpy(cistern_fuel, &c, 10);
 
     while (cistern_pos > 10){
         pthread_mutex_lock(&mutex_refresh);
             cistern_pos -- ;
         pthread_mutex_unlock(&mutex_refresh);
-            usleep(50000);
+            usleep(move_time);
     }
 
     cistern = true;
 
     for (int i = 10; i > 0; i--) {
         memcpy(cistern_fuel, &c, i);
-        memcpy(cistern_fuel + i, &s, 10 - i);
+        memcpy(cistern_fuel + i -1, &s, 11 - i);
         pthread_mutex_lock(&mutex_fuel);
 
         if (fuel_state >= 950) {
@@ -266,7 +348,7 @@ void *thread_cistern(void *args){
 
         pthread_mutex_unlock(&mutex_fuel);
 
-        usleep(500000);
+        usleep(move_time);
     }
     cistern = false;
     pthread_cond_broadcast(&empty);
@@ -275,7 +357,7 @@ void *thread_cistern(void *args){
         pthread_mutex_lock(&mutex_refresh);
         cistern_pos--;
         pthread_mutex_unlock(&mutex_refresh);
-        usleep(50000);
+        usleep(move_time);
     }
 
 
@@ -292,7 +374,8 @@ void *thread_keyboard(void *args){
 
         exit_var = c == 'q';
 
-        if (c == 'a') {
+        if (c == 'a' && on_station < 66) {
+            on_station ++;
             clients.push_back(new Client());
         }
 
@@ -321,6 +404,12 @@ void *thread_refresh(void *args){
 
 int main() {
     srand(time(nullptr));
+
+    for (int i = 0; i < 3; i++){
+        for (int j = 0; j <= last_position; j++){
+            positions[i].push_back(false);
+        }
+    }
     initscr();
     noecho();
     curs_set(0);
@@ -333,11 +422,18 @@ int main() {
     pthread_join(th_refresh, nullptr);
     pthread_join(th_keyboard, nullptr);
 
-    for (Client *client : clients){
-        delete(client);
+    while( ! clients.empty()){
+        delete(clients.front());
+        clients.pop_front();
     }
 
+    echo();
+    curs_set(1);
+    clear();
+
     pthread_cond_destroy(&empty);
+    endwin();
+    system("reset");
     return 0;
 }
 
